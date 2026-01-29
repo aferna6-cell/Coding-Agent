@@ -1,0 +1,14 @@
+{
+  "destination_number": "+12032322876",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Design the agent workflow",
+      "description": "Draft the workflow for prompting the primary agent and Claude Code.",
+      "acceptance_criteria": [
+        "Prompt templates exist for both agents",
+        "Workflow handles sequential execution"
+      ]
+    }
+  ]
+}
