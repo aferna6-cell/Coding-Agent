@@ -19,10 +19,12 @@ python run.py --tasks tasks.json
 
 ### Windows (PowerShell)
 
+If `py` or `pip` are not recognized, use `python` directly (or install Python from https://www.python.org/downloads/ and ensure it is on your PATH).
+
 ```powershell
-py -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python run.py --tasks tasks.json
 ```
 
