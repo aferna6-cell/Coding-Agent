@@ -17,6 +17,15 @@ pip install -r requirements.txt
 python run.py --tasks tasks.json
 ```
 
+### Windows (PowerShell)
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python run.py --tasks tasks.json
+```
+
 ## Configuration
 
 The SMS notifier uses Twilio if the following environment variables are set:
