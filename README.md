@@ -1,59 +1,210 @@
-# Coding-Agent
+# Task Queue AI Agent (MVP)
 
-A simple task runner that converts feature requests into AI-friendly prompts for two agents ("you" and "Claude Code"), processes tasks in sequence, and sends an SMS notification when each task completes.
+A local, sequential task queue runner that compiles coding requests into high-quality prompts, runs them through Claude Code CLI first, and falls back to OpenAI Codex CLI when needed. Tasks are stored persistently in SQLite, and completion notifications are sent via a free Telegram bot.
 
 ## Features
-- Reads a queue of tasks from a JSON file.
-- Builds role-specific prompts for a primary agent ("you") and Claude Code.
-- Runs tasks sequentially, marking each task as completed.
-- Sends an SMS on completion (Twilio via environment variables).
+- Sequential queue processing with SQLite persistence.
+- Prompt compilation with structured sections and strict output format.
+- Claude-first routing with fallback to Codex on failure or rate limit.
+- Unrestricted execution for trusted local automation.
+- Telegram bot notifications (free).
+- CLI commands: init, add, list, run, show, cancel, doctor.
 
-## Quick start
+---
+
+## WSL2 + Ubuntu setup (Windows)
+
+1. **Install WSL2**
+   - Open PowerShell as Administrator:
+     ```powershell
+     wsl --install
+     ```
+   - Reboot if prompted.
+
+2. **Install Ubuntu**
+   - From the Microsoft Store, install **Ubuntu 22.04 LTS** (or newer).
+   - Launch Ubuntu and complete the user setup.
+
+3. **Update packages & install Python 3.11+**
+   ```bash
+   sudo apt update
+   sudo apt install -y python3.11 python3.11-venv python3-pip
+   ```
+
+4. **Clone this repo in WSL2**
+   ```bash
+   git clone <your-repo-url>
+   cd Coding-Agent
+   ```
+
+> **WSL path caveat:**
+> - Linux-native paths (e.g. `/home/you/projects/foo`) are fastest and most reliable.
+> - Windows-mounted paths (e.g. `/mnt/c/Users/you/...`) work, but file I/O is slower and can cause extra latency for AI CLIs.
+
+---
+
+## Python environment
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python run.py --tasks tasks.json
 ```
 
-### Windows (PowerShell)
+---
 
-If `py` or `pip` are not recognized, use `python` directly (or install Python from https://www.python.org/downloads/ and ensure it is on your PATH).
+## Install / verify AI CLIs
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python run.py --tasks tasks.json
+The agent expects **Claude Code** and **Codex** CLIs to be available in `$PATH`. You can change the command names in the config file.
+
+Verify:
+```bash
+which claude
+which codex
 ```
 
-## Configuration
+If your commands differ (e.g., `claude-code`), update `config.json` after running `agent init`.
 
-The SMS notifier uses Twilio if the following environment variables are set:
+---
 
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_FROM_NUMBER`
+## Telegram bot notifications (free)
 
-The default destination number is set in `tasks.json`, but can be overridden with `--to`.
+1. **Create a bot**
+   - Open Telegram and message `@BotFather`.
+   - Run `/newbot` and follow the instructions.
+   - Copy the bot token.
 
-## Task format
+2. **Get your chat_id**
+   - Start a chat with your new bot and send any message.
+   - Open this URL in a browser (replace `<TOKEN>`):
+     ```
+     https://api.telegram.org/bot<TOKEN>/getUpdates
+     ```
+   - Look for `"chat":{"id":<chat_id>}`.
+
+3. **Configure**
+   - Run `agent init` (see below).
+   - Edit `.task_queue_ai_agent/config.json` and set:
+     ```json
+     {
+       "telegram": {
+         "bot_token": "YOUR_TOKEN",
+         "chat_id": "YOUR_CHAT_ID"
+       }
+     }
+     ```
+
+---
+
+## CLI usage
+
+All commands run from the repo root:
+
+### Initialize
+```bash
+python -m ai_agent.cli init
+```
+
+### Add a task
+```bash
+python -m ai_agent.cli add \
+  --title "Add CSV export" \
+  --repo-path /home/you/projects/example \
+  --request "Add a CSV export button on the reports page" \
+  --constraints "Use existing table data; no new dependencies" \
+  --acceptance "Button appears on Reports" \
+  --acceptance "CSV downloads with headers"
+```
+
+### List tasks
+```bash
+python -m ai_agent.cli list
+```
+
+### Run worker (sequential)
+```bash
+python -m ai_agent.cli run
+```
+
+### Dry run (compile prompt only)
+```bash
+python -m ai_agent.cli run --dry-run
+```
+
+### Show a task (details + logs)
+```bash
+python -m ai_agent.cli show 1
+```
+
+### Cancel a queued task
+```bash
+python -m ai_agent.cli cancel 1
+```
+
+### Environment checks
+```bash
+python -m ai_agent.cli doctor
+```
+
+---
+
+## Example task (end-to-end)
+
+```bash
+python -m ai_agent.cli init
+python -m ai_agent.cli add \
+  --title "Refactor auth handler" \
+  --repo-path /home/you/projects/app \
+  --request "Refactor auth handler for clarity and add unit tests" \
+  --constraints "Do not change public APIs" \
+  --acceptance "All auth tests pass" \
+  --acceptance "No behavior regressions"
+python -m ai_agent.cli run
+```
+
+---
+
+## Configuration file
+
+Generated at `.task_queue_ai_agent/config.json` after `init`.
 
 ```json
 {
-  "destination_number": "+12032322876",
-  "tasks": [
-    {
-      "id": "task-1",
-      "title": "Example task",
-      "description": "Describe the task here",
-      "acceptance_criteria": ["First outcome", "Second outcome"]
-    }
-  ]
+  "db_path": ".task_queue_ai_agent/agent.db",
+  "provider": {
+    "claude_command": ["claude"],
+    "codex_command": ["codex"]
+  },
+  "telegram": {
+    "bot_token": "",
+    "chat_id": ""
+  }
 }
 ```
 
-## Notes
-- Prompt delivery is currently implemented as console output. Swap `ConsoleClient` for a real API client if desired.
-- SMS delivery is best-effort; if Twilio is not configured, it logs a warning and continues.
+---
+
+## Unrestricted mode
+
+This agent runs in **UNRESTRICTED MODE** for trusted local use. It does not prompt for approvals, block commands, or require special flags before executing tasks. Use it only in environments where you trust the inputs and repositories.
+
+---
+
+## File tree
+
+```
+ai_agent/
+  __init__.py
+  cli.py
+  compiler.py
+  config.py
+  db.py
+  notify.py
+  router.py
+  safety.py
+  providers/
+    claude_code.py
+    codex.py
+README.md
+requirements.txt
+```
