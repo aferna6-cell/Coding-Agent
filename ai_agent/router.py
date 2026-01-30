@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Tuple
 
 from .providers.claude_code import ClaudeCodeRunner
-from .providers.codex import CodexRunner
+from .providers.codex import CodexRunner, is_stdin_tty_error
 
 RATE_LIMIT_KEYWORDS = (
     "rate limit",
@@ -12,6 +12,23 @@ RATE_LIMIT_KEYWORDS = (
     "exceeded",
     "too many requests",
 )
+
+RETRIABLE_KEYWORDS = (
+    *RATE_LIMIT_KEYWORDS,
+)
+
+
+def extract_error_message(result: object) -> str:
+    """Build a descriptive error message from a failed provider result."""
+    if result.exit_code == 0:
+        return ""
+    parts = [f"Provider '{result.provider}' exited with code {result.exit_code}."]
+    if result.logs and is_stdin_tty_error(result.logs):
+        parts.append("Retriable: stdin/TTY error detected.")
+    stderr_snippet = (result.logs or "")[-500:]
+    if stderr_snippet:
+        parts.append(f"Tail: {stderr_snippet}")
+    return " ".join(parts)
 
 
 class ProviderRouter:

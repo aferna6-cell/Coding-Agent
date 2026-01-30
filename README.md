@@ -181,6 +181,19 @@ Generated at `.task_queue_ai_agent/config.json` after `init`.
 
 ---
 
+## Troubleshooting
+
+### Codex: "stdin is not a terminal"
+
+Codex must run with `CI=1` in headless mode to avoid stdin/TTY errors.
+The agent sets this automatically — if you still see this error, verify:
+
+1. Run `python -m ai_agent.cli doctor` and check the **Codex headless smoke test** line.
+2. Ensure the `codex` binary in your `$PATH` supports `--prompt` and `--help` flags.
+3. The agent passes `stdin=/dev/null` and `CI=1` to every Codex subprocess.
+
+---
+
 ## Execution model
 
 This agent runs in **UNRESTRICTED MODE** for trusted local use:
