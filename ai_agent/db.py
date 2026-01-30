@@ -17,7 +17,6 @@ class TaskRecord:
     request: str
     constraints: Optional[str]
     acceptance: Optional[str]
-    dangerous_ok: bool
     preferred_provider: str
     status: str
     provider_used: str
@@ -49,7 +48,6 @@ class Database:
                     request TEXT NOT NULL,
                     constraints TEXT,
                     acceptance TEXT,
-                    dangerous_ok INTEGER DEFAULT 0,
                     preferred_provider TEXT DEFAULT 'claude_first',
                     status TEXT DEFAULT 'queued',
                     provider_used TEXT DEFAULT 'none',
@@ -70,7 +68,6 @@ class Database:
         request: str,
         constraints: Optional[str],
         acceptance: Optional[str],
-        dangerous_ok: bool,
         preferred_provider: str,
     ) -> int:
         created_at = datetime.utcnow().strftime(ISO_FORMAT)
@@ -83,13 +80,12 @@ class Database:
                     request,
                     constraints,
                     acceptance,
-                    dangerous_ok,
                     preferred_provider,
                     status,
                     provider_used,
                     created_at,
                     attempts
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'none', ?, 0)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'none', ?, 0)
                 """,
                 (
                     title,
@@ -97,7 +93,6 @@ class Database:
                     request,
                     constraints,
                     acceptance,
-                    int(dangerous_ok),
                     preferred_provider,
                     created_at,
                 ),
@@ -202,7 +197,6 @@ class Database:
             request=row["request"],
             constraints=row["constraints"],
             acceptance=row["acceptance"],
-            dangerous_ok=bool(row["dangerous_ok"]),
             preferred_provider=row["preferred_provider"],
             status=row["status"],
             provider_used=row["provider_used"],
