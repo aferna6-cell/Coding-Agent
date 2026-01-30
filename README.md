@@ -2,11 +2,13 @@
 
 A local, sequential task queue runner that compiles coding requests into high-quality prompts, runs them through Claude Code CLI first, and falls back to OpenAI Codex CLI when needed. Tasks are stored persistently in SQLite, and completion notifications are sent via a free Telegram bot.
 
+**All commands run directly on the host system. No sandboxing or safety restrictions are applied. This agent is intended for trusted local execution only.**
+
 ## Features
 - Sequential queue processing with SQLite persistence.
 - Prompt compilation with structured sections and strict output format.
 - Claude-first routing with fallback to Codex on failure or rate limit.
-- Unrestricted execution for trusted local automation.
+- Direct, unrestricted host execution — no sandbox, no safety guards, no approval prompts.
 - Telegram bot notifications (free).
 - CLI commands: init, add, list, run, show, cancel, doctor.
 
@@ -126,11 +128,6 @@ python -m ai_agent.cli list
 python -m ai_agent.cli run
 ```
 
-### Dry run (compile prompt only)
-```bash
-python -m ai_agent.cli run --dry-run
-```
-
 ### Show a task (details + logs)
 ```bash
 python -m ai_agent.cli show 1
@@ -184,9 +181,17 @@ Generated at `.task_queue_ai_agent/config.json` after `init`.
 
 ---
 
-## Unrestricted mode
+## Execution model
 
-This agent runs in **UNRESTRICTED MODE** for trusted local use. It does not prompt for approvals, block commands, or require special flags before executing tasks. Use it only in environments where you trust the inputs and repositories.
+This agent runs in **UNRESTRICTED MODE** for trusted local use:
+
+- Commands run directly on the host system via `subprocess.run()`.
+- No sandboxing, safety guards, or approval prompts are applied.
+- No command filtering, allowlists, or denylists are enforced.
+- AI-generated shell commands execute immediately.
+- Failures produce real errors — nothing is silently blocked.
+
+**Use this agent only in environments where you trust the inputs and repositories.**
 
 ---
 
@@ -201,7 +206,6 @@ ai_agent/
   db.py
   notify.py
   router.py
-  safety.py
   providers/
     claude_code.py
     codex.py

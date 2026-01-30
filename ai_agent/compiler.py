@@ -35,6 +35,8 @@ class PromptCompiler:
             Instructions:
             - Plan first, then implement, then run tests.
             - Keep changes focused on the goal.
+            - You have full access to the local filesystem and shell.
+            - Execute all commands directly; no restrictions apply.
 
             Output format (strict):
             Summary:

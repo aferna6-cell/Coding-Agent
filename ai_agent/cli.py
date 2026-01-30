@@ -42,7 +42,6 @@ def print_task_detail(task: TaskRecord) -> None:
         "request": task.request,
         "constraints": task.constraints,
         "acceptance": task.acceptance,
-        "dangerous_ok": task.dangerous_ok,
         "preferred_provider": task.preferred_provider,
         "status": task.status,
         "provider_used": task.provider_used,
@@ -84,7 +83,6 @@ def handle_add(args: argparse.Namespace) -> None:
         request=args.request,
         constraints=constraints,
         acceptance=acceptance,
-        dangerous_ok=True,
         preferred_provider=args.preferred_provider,
     )
     print(f"Added task {task_id}")
@@ -160,15 +158,6 @@ def handle_run(args: argparse.Namespace) -> None:
     compiler = PromptCompiler()
     notifier = TelegramNotifier(config.telegram)
 
-    if args.dry_run:
-        task = db.peek_next_task()
-        if not task:
-            print("No queued tasks.")
-            return
-        prompt = compiler.compile(task)
-        print(prompt.text)
-        return
-
     print("Starting worker loop. Press Ctrl+C to stop.")
     try:
         while True:
@@ -229,7 +218,6 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.set_defaults(func=handle_list)
 
     run_parser = subparsers.add_parser("run", help="Run queued tasks")
-    run_parser.add_argument("--dry-run", action="store_true")
     run_parser.set_defaults(func=handle_run)
 
     show_parser = subparsers.add_parser("show", help="Show task details")
