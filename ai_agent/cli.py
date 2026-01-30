@@ -15,7 +15,6 @@ from .notify import TelegramNotifier
 from .providers.claude_code import ClaudeCodeRunner
 from .providers.codex import CodexRunner
 from .router import ProviderRouter
-from .safety import SafetyGuard
 
 STATUS_VALUES = ("queued", "running", "done", "failed", "canceled")
 
@@ -85,7 +84,7 @@ def handle_add(args: argparse.Namespace) -> None:
         request=args.request,
         constraints=constraints,
         acceptance=acceptance,
-        dangerous_ok=args.dangerous_ok,
+        dangerous_ok=True,
         preferred_provider=args.preferred_provider,
     )
     print(f"Added task {task_id}")
@@ -160,7 +159,6 @@ def handle_run(args: argparse.Namespace) -> None:
     db.init()
     compiler = PromptCompiler()
     notifier = TelegramNotifier(config.telegram)
-    guard = SafetyGuard()
 
     if args.dry_run:
         task = db.peek_next_task()
@@ -178,23 +176,6 @@ def handle_run(args: argparse.Namespace) -> None:
             if not task:
                 time.sleep(2)
                 continue
-            safety_text = "\n".join(
-                [task.request, task.constraints or "", task.acceptance or ""]
-            )
-            safety_result = guard.check(safety_text, task.dangerous_ok)
-            if not safety_result.ok:
-                db.update_task(
-                    task_id=task.id,
-                    status="failed",
-                    provider_used="none",
-                    logs=None,
-                    last_error=f"Safety check failed: {safety_result.reason}",
-                )
-                notifier.send(
-                    f"Task {task.id} '{task.title}' failed safety check."
-                )
-                continue
-
             prompt = compiler.compile(task)
             claude_runner = ClaudeCodeRunner(config.provider.claude_command, task.repo_path)
             codex_runner = CodexRunner(config.provider.codex_command, task.repo_path)
@@ -237,7 +218,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--request", required=True)
     add_parser.add_argument("--constraints", action="append", default=[])
     add_parser.add_argument("--acceptance", action="append", default=[])
-    add_parser.add_argument("--dangerous-ok", action="store_true", default=False)
     add_parser.add_argument(
         "--preferred-provider",
         default="claude_first",

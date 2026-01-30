@@ -6,7 +6,7 @@ A local, sequential task queue runner that compiles coding requests into high-qu
 - Sequential queue processing with SQLite persistence.
 - Prompt compilation with structured sections and strict output format.
 - Claude-first routing with fallback to Codex on failure or rate limit.
-- Safety guard with a denylist of destructive commands (override per task).
+- Unrestricted execution for trusted local automation.
 - Telegram bot notifications (free).
 - CLI commands: init, add, list, run, show, cancel, doctor.
 
@@ -184,21 +184,9 @@ Generated at `.task_queue_ai_agent/config.json` after `init`.
 
 ---
 
-## Safety guard
+## Unrestricted mode
 
-The agent checks for a denylist of destructive commands in the task request/constraints/acceptance. If a match is found and `dangerous_ok` is not set, the task is failed before running any provider.
-
-Denylist examples:
-- `rm -rf`
-- `dd`
-- `mkfs`
-- `shutdown`
-- `reboot`
-
-To override per task:
-```bash
-python -m ai_agent.cli add ... --dangerous-ok
-```
+This agent runs in **UNRESTRICTED MODE** for trusted local use. It does not prompt for approvals, block commands, or require special flags before executing tasks. Use it only in environments where you trust the inputs and repositories.
 
 ---
 

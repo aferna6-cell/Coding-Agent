@@ -34,7 +34,6 @@ class PromptCompiler:
 
             Instructions:
             - Plan first, then implement, then run tests.
-            - Avoid destructive shell commands unless explicitly allowed.
             - Keep changes focused on the goal.
 
             Output format (strict):
