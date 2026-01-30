@@ -4,17 +4,11 @@ import argparse
 import json
 import shutil
 import sys
-import time
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .compiler import PromptCompiler, summarize_logs
 from .config import ConfigManager, default_app_config, resolve_config_path
 from .db import Database, TaskRecord
-from .notify import TelegramNotifier
-from .providers.claude_code import ClaudeCodeRunner
-from .providers.codex import CodexRunner
-from .router import ProviderRouter
 
 STATUS_VALUES = ("queued", "running", "done", "failed", "canceled")
 
@@ -51,6 +45,13 @@ def print_task_detail(task: TaskRecord) -> None:
         "attempts": task.attempts,
         "last_error": task.last_error,
         "logs": task.logs,
+        "parent_task_id": task.parent_task_id,
+        "chain_group_id": task.chain_group_id,
+        "depends_on_task_id": task.depends_on_task_id,
+        "run_after": task.run_after,
+        "priority": task.priority,
+        "branch_name": task.branch_name,
+        "commit_hash": task.commit_hash,
     }
     print(json.dumps(data, indent=2))
 
@@ -84,6 +85,9 @@ def handle_add(args: argparse.Namespace) -> None:
         constraints=constraints,
         acceptance=acceptance,
         preferred_provider=args.preferred_provider,
+        parent_task_id=args.parent_task_id,
+        depends_on_task_id=args.depends_on,
+        priority=args.priority,
     )
     print(f"Added task {task_id}")
 
@@ -139,6 +143,7 @@ def handle_doctor(args: argparse.Namespace) -> None:
         checks.append((telegram_ready, "Telegram configuration"))
         checks.append((shutil.which(config.provider.claude_command[0]) is not None, "Claude CLI"))
         checks.append((shutil.which(config.provider.codex_command[0]) is not None, "Codex CLI"))
+        checks.append((True, f"Git enabled: {config.git.enabled}"))
     else:
         checks.append((False, "Config missing: run agent init"))
 
@@ -155,42 +160,10 @@ def handle_run(args: argparse.Namespace) -> None:
     config = manager.load()
     db = Database(config.db_path)
     db.init()
-    compiler = PromptCompiler()
-    notifier = TelegramNotifier(config.telegram)
 
-    print("Starting worker loop. Press Ctrl+C to stop.")
-    try:
-        while True:
-            task = db.claim_next_task()
-            if not task:
-                time.sleep(2)
-                continue
-            prompt = compiler.compile(task)
-            claude_runner = ClaudeCodeRunner(config.provider.claude_command, task.repo_path)
-            codex_runner = CodexRunner(config.provider.codex_command, task.repo_path)
-            router = ProviderRouter(claude_runner, codex_runner)
-            result, success = router.run(prompt.text)
+    from .worker import run_workers
 
-            status = "done" if success else "failed"
-            last_error = None if success else "Provider failed"
-            db.update_task(
-                task_id=task.id,
-                status=status,
-                provider_used=result.provider if success else result.provider,
-                logs=result.logs,
-                last_error=last_error,
-            )
-            summary = summarize_logs(result.logs or "")
-            message = (
-                f"Task {task.id}: {task.title}\n"
-                f"Status: {status}\n"
-                f"Provider: {result.provider}\n"
-                f"Summary: {summary}\n"
-                f"Task ID: {task.id}"
-            )
-            notifier.send(message)
-    except KeyboardInterrupt:
-        print("Worker stopped.")
+    run_workers(config=config, db=db, num_workers=args.workers)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -212,12 +185,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="claude_first",
         choices=["claude_first"],
     )
+    add_parser.add_argument("--parent-task-id", type=int, default=None, help="Parent task ID for chaining")
+    add_parser.add_argument("--depends-on", type=int, default=None, help="Task ID this task depends on")
+    add_parser.add_argument("--priority", type=int, default=0, help="Priority (higher runs first)")
     add_parser.set_defaults(func=handle_add)
 
     list_parser = subparsers.add_parser("list", help="List tasks")
     list_parser.set_defaults(func=handle_list)
 
     run_parser = subparsers.add_parser("run", help="Run queued tasks")
+    run_parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers (default: 1)")
     run_parser.set_defaults(func=handle_run)
 
     show_parser = subparsers.add_parser("show", help="Show task details")

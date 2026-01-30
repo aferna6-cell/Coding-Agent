@@ -29,10 +29,21 @@ class TelegramConfig:
 
 
 @dataclass
+class GitConfig:
+    enabled: bool = True
+    auto_branch: bool = True
+    auto_commit: bool = True
+    auto_push: bool = False
+    branch_prefix: str = "agent/"
+    remote: str = "origin"
+
+
+@dataclass
 class AppConfig:
     db_path: Path
     provider: ProviderConfig = field(default_factory=ProviderConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    git: GitConfig = field(default_factory=GitConfig)
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +56,14 @@ class AppConfig:
                 "bot_token": self.telegram.bot_token,
                 "chat_id": self.telegram.chat_id,
             },
+            "git": {
+                "enabled": self.git.enabled,
+                "auto_branch": self.git.auto_branch,
+                "auto_commit": self.git.auto_commit,
+                "auto_push": self.git.auto_push,
+                "branch_prefix": self.git.branch_prefix,
+                "remote": self.git.remote,
+            },
         }
 
     @classmethod
@@ -52,6 +71,7 @@ class AppConfig:
         db_path = Path(data["db_path"]) if data.get("db_path") else Path(DEFAULT_DB_NAME)
         provider = data.get("provider", {})
         telegram = data.get("telegram", {})
+        git = data.get("git", {})
         return cls(
             db_path=db_path,
             provider=ProviderConfig(
@@ -61,6 +81,14 @@ class AppConfig:
             telegram=TelegramConfig(
                 bot_token=telegram.get("bot_token", ""),
                 chat_id=telegram.get("chat_id", ""),
+            ),
+            git=GitConfig(
+                enabled=git.get("enabled", True),
+                auto_branch=git.get("auto_branch", True),
+                auto_commit=git.get("auto_commit", True),
+                auto_push=git.get("auto_push", False),
+                branch_prefix=git.get("branch_prefix", "agent/"),
+                remote=git.get("remote", "origin"),
             ),
         )
 

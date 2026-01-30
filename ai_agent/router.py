@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from .providers.claude_code import ClaudeCodeRunner
+from .providers.claude_code import ClaudeCodeRunner, ProviderResult
 from .providers.codex import CodexRunner
 
 RATE_LIMIT_KEYWORDS = (
@@ -11,6 +11,9 @@ RATE_LIMIT_KEYWORDS = (
     "quota",
     "exceeded",
     "too many requests",
+    "429",
+    "capacity",
+    "overloaded",
 )
 
 
@@ -19,15 +22,17 @@ class ProviderRouter:
         self.claude = claude
         self.codex = codex
 
-    def run(self, prompt: str) -> Tuple[object, bool]:
+    def run(self, prompt: str) -> Tuple[ProviderResult, bool]:
         primary = self.claude.run(prompt)
-        if self._should_fallback(primary):
+        if self._is_rate_limited(primary):
             fallback = self.codex.run(prompt)
             return fallback, fallback.exit_code == 0
-        return primary, primary.exit_code == 0
+        if primary.exit_code != 0:
+            # Non-rate-limit failure from Claude — try Codex
+            fallback = self.codex.run(prompt)
+            return fallback, fallback.exit_code == 0
+        return primary, True
 
-    def _should_fallback(self, result: object) -> bool:
-        if result.exit_code != 0:
-            return True
+    def _is_rate_limited(self, result: ProviderResult) -> bool:
         logs = result.logs.lower() if result.logs else ""
         return any(keyword in logs for keyword in RATE_LIMIT_KEYWORDS)

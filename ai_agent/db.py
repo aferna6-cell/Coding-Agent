@@ -26,6 +26,15 @@ class TaskRecord:
     attempts: int
     last_error: Optional[str]
     logs: Optional[str]
+    # chaining fields
+    parent_task_id: Optional[int]
+    chain_group_id: Optional[int]
+    depends_on_task_id: Optional[int]
+    run_after: Optional[str]
+    priority: int
+    # git fields
+    branch_name: Optional[str]
+    commit_hash: Optional[str]
 
 
 class Database:
@@ -33,8 +42,10 @@ class Database:
         self.path = path
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=10000")
         return connection
 
     def init(self) -> None:
@@ -56,10 +67,34 @@ class Database:
                     finished_at TEXT,
                     attempts INTEGER DEFAULT 0,
                     last_error TEXT,
-                    logs TEXT
+                    logs TEXT,
+                    parent_task_id INTEGER,
+                    chain_group_id INTEGER,
+                    depends_on_task_id INTEGER,
+                    run_after TEXT,
+                    priority INTEGER DEFAULT 0,
+                    branch_name TEXT,
+                    commit_hash TEXT
                 )
                 """
             )
+            # migrate existing tables: add columns if missing
+            existing = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            migrations = {
+                "parent_task_id": "ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER",
+                "chain_group_id": "ALTER TABLE tasks ADD COLUMN chain_group_id INTEGER",
+                "depends_on_task_id": "ALTER TABLE tasks ADD COLUMN depends_on_task_id INTEGER",
+                "run_after": "ALTER TABLE tasks ADD COLUMN run_after TEXT",
+                "priority": "ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0",
+                "branch_name": "ALTER TABLE tasks ADD COLUMN branch_name TEXT",
+                "commit_hash": "ALTER TABLE tasks ADD COLUMN commit_hash TEXT",
+            }
+            for col, ddl in migrations.items():
+                if col not in existing:
+                    conn.execute(ddl)
 
     def add_task(
         self,
@@ -69,6 +104,11 @@ class Database:
         constraints: Optional[str],
         acceptance: Optional[str],
         preferred_provider: str,
+        parent_task_id: Optional[int] = None,
+        chain_group_id: Optional[int] = None,
+        depends_on_task_id: Optional[int] = None,
+        run_after: Optional[str] = None,
+        priority: int = 0,
     ) -> int:
         created_at = datetime.utcnow().strftime(ISO_FORMAT)
         with self.connect() as conn:
@@ -84,8 +124,13 @@ class Database:
                     status,
                     provider_used,
                     created_at,
-                    attempts
-                ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'none', ?, 0)
+                    attempts,
+                    parent_task_id,
+                    chain_group_id,
+                    depends_on_task_id,
+                    run_after,
+                    priority
+                ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'none', ?, 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     title,
@@ -95,6 +140,11 @@ class Database:
                     acceptance,
                     preferred_provider,
                     created_at,
+                    parent_task_id,
+                    chain_group_id,
+                    depends_on_task_id,
+                    run_after,
+                    priority,
                 ),
             )
             return int(cursor.lastrowid)
@@ -127,32 +177,58 @@ class Database:
             return cursor.rowcount > 0
 
     def claim_next_task(self) -> Optional[TaskRecord]:
+        """Atomically claim the next eligible queued task.
+
+        Eligibility rules:
+        - status = 'queued'
+        - If depends_on_task_id is set, that task must have status 'done'
+        - If run_after is set, current time must be >= run_after
+        - Ordered by priority DESC then created_at ASC
+        """
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            now = datetime.utcnow().strftime(ISO_FORMAT)
             row = conn.execute(
                 """
-                SELECT * FROM tasks
-                WHERE status = 'queued'
-                ORDER BY created_at ASC
+                SELECT t.* FROM tasks t
+                WHERE t.status = 'queued'
+                  AND (
+                    t.depends_on_task_id IS NULL
+                    OR EXISTS (
+                        SELECT 1 FROM tasks dep
+                        WHERE dep.id = t.depends_on_task_id
+                          AND dep.status = 'done'
+                    )
+                  )
+                  AND (t.run_after IS NULL OR t.run_after <= ?)
+                ORDER BY t.priority DESC, t.created_at ASC
                 LIMIT 1
-                """
+                """,
+                (now,),
             ).fetchone()
             if not row:
                 conn.execute("COMMIT")
                 return None
             started_at = datetime.utcnow().strftime(ISO_FORMAT)
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE tasks
                 SET status = 'running',
                     started_at = ?,
                     attempts = attempts + 1
-                WHERE id = ?
+                WHERE id = ? AND status = 'queued'
                 """,
                 (started_at, row["id"]),
             )
             conn.execute("COMMIT")
-            return self._row_to_record(row)
+            if cursor.rowcount == 0:
+                return None
+            updated = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (row["id"],)
+            ).fetchone()
+            if updated and updated["status"] == "running":
+                return self._row_to_record(updated)
+            return None
 
     def peek_next_task(self) -> Optional[TaskRecord]:
         with self.connect() as conn:
@@ -160,7 +236,7 @@ class Database:
                 """
                 SELECT * FROM tasks
                 WHERE status = 'queued'
-                ORDER BY created_at ASC
+                ORDER BY priority DESC, created_at ASC
                 LIMIT 1
                 """
             ).fetchone()
@@ -173,6 +249,8 @@ class Database:
         provider_used: str,
         logs: Optional[str],
         last_error: Optional[str],
+        branch_name: Optional[str] = None,
+        commit_hash: Optional[str] = None,
     ) -> None:
         finished_at = datetime.utcnow().strftime(ISO_FORMAT)
         with self.connect() as conn:
@@ -183,10 +261,20 @@ class Database:
                     provider_used = ?,
                     logs = ?,
                     last_error = ?,
-                    finished_at = ?
+                    finished_at = ?,
+                    branch_name = COALESCE(?, branch_name),
+                    commit_hash = COALESCE(?, commit_hash)
                 WHERE id = ?
                 """,
-                (status, provider_used, logs, last_error, finished_at, task_id),
+                (status, provider_used, logs, last_error, finished_at,
+                 branch_name, commit_hash, task_id),
+            )
+
+    def set_branch(self, task_id: int, branch_name: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE tasks SET branch_name = ? WHERE id = ?",
+                (branch_name, task_id),
             )
 
     def _row_to_record(self, row: sqlite3.Row) -> TaskRecord:
@@ -206,4 +294,11 @@ class Database:
             attempts=row["attempts"],
             last_error=row["last_error"],
             logs=row["logs"],
+            parent_task_id=row["parent_task_id"],
+            chain_group_id=row["chain_group_id"],
+            depends_on_task_id=row["depends_on_task_id"],
+            run_after=row["run_after"],
+            priority=row["priority"],
+            branch_name=row["branch_name"],
+            commit_hash=row["commit_hash"],
         )

@@ -1,15 +1,19 @@
-# Task Queue AI Agent (MVP)
+# Task Queue AI Agent
 
-A local, sequential task queue runner that compiles coding requests into high-quality prompts, runs them through Claude Code CLI first, and falls back to OpenAI Codex CLI when needed. Tasks are stored persistently in SQLite, and completion notifications are sent via a free Telegram bot.
+A local task queue runner that compiles coding requests into high-quality prompts, runs them through Claude Code CLI first, and falls back to OpenAI Codex CLI when needed. Tasks are stored persistently in SQLite, and completion notifications are sent via a free Telegram bot.
 
 **All commands run directly on the host system. No sandboxing or safety restrictions are applied. This agent is intended for trusted local execution only.**
 
 ## Features
-- Sequential queue processing with SQLite persistence.
-- Prompt compilation with structured sections and strict output format.
-- Claude-first routing with fallback to Codex on failure or rate limit.
-- Direct, unrestricted host execution — no sandbox, no safety guards, no approval prompts.
-- Telegram bot notifications (free).
+- **Parallel workers** — run N workers concurrently with `--workers N`.
+- **Auto git workflow** — per-task branch creation, auto-commit, optional push.
+- **Task chaining** — LLM output can enqueue follow-up tasks with dependency ordering.
+- **Priority queue** — tasks execute by priority DESC, then FIFO.
+- **Provider fallback** — Claude-first routing with automatic Codex fallback on failure or rate limit.
+- **Dependency awareness** — tasks with `depends_on` wait until the dependency completes.
+- **Repo locking** — parallel workers acquire per-repo locks so git operations don't conflict.
+- SQLite persistence with WAL mode for safe concurrent access.
+- Telegram bot notifications with branch/commit info.
 - CLI commands: init, add, list, run, show, cancel, doctor.
 
 ---
@@ -118,14 +122,29 @@ python -m ai_agent.cli add \
   --acceptance "CSV downloads with headers"
 ```
 
+### Add a task with priority and dependency
+```bash
+python -m ai_agent.cli add \
+  --title "Write integration tests" \
+  --repo-path /home/you/projects/example \
+  --request "Write integration tests for the CSV export feature" \
+  --depends-on 1 \
+  --priority 5
+```
+
 ### List tasks
 ```bash
 python -m ai_agent.cli list
 ```
 
-### Run worker (sequential)
+### Run worker (single, default)
 ```bash
 python -m ai_agent.cli run
+```
+
+### Run with parallel workers
+```bash
+python -m ai_agent.cli run --workers 4
 ```
 
 ### Show a task (details + logs)
@@ -145,18 +164,56 @@ python -m ai_agent.cli doctor
 
 ---
 
-## Example task (end-to-end)
+## Auto git workflow
+
+Each task can automatically create a branch, commit changes, and push.
+
+Configure in `.task_queue_ai_agent/config.json`:
+
+```json
+{
+  "git": {
+    "enabled": true,
+    "auto_branch": true,
+    "auto_commit": true,
+    "auto_push": false,
+    "branch_prefix": "agent/",
+    "remote": "origin"
+  }
+}
+```
+
+**Behavior:**
+- On task start: creates branch `agent/task-{id}-{slugified-title}` (or checks it out if it exists).
+- After execution: runs `git add -A && git commit -m "agent: task {id} {title}"`.
+- If `auto_push` is true: pushes to `{remote}/{branch}`.
+- Branch name and commit hash are stored in the task record and included in Telegram notifications.
+- If the repo path is not a git repository, git operations are skipped.
+
+---
+
+## Task chaining
+
+Tasks can enqueue follow-up tasks. The LLM output is scanned for a JSON block:
+
+```json
+{"followups":[{"title":"...","request":"...","repo_path":"...","depends_on":"this"}]}
+```
+
+Follow-ups are automatically enqueued with:
+- `parent_task_id` set to the originating task
+- `chain_group_id` for grouping related tasks
+- `depends_on_task_id` set to the parent if `depends_on` is `"this"`
+
+You can also manually chain tasks via the CLI:
 
 ```bash
-python -m ai_agent.cli init
 python -m ai_agent.cli add \
-  --title "Refactor auth handler" \
+  --title "Deploy feature" \
   --repo-path /home/you/projects/app \
-  --request "Refactor auth handler for clarity and add unit tests" \
-  --constraints "Do not change public APIs" \
-  --acceptance "All auth tests pass" \
-  --acceptance "No behavior regressions"
-python -m ai_agent.cli run
+  --request "Deploy the new feature to staging" \
+  --parent-task-id 1 \
+  --depends-on 1
 ```
 
 ---
@@ -175,6 +232,14 @@ Generated at `.task_queue_ai_agent/config.json` after `init`.
   "telegram": {
     "bot_token": "",
     "chat_id": ""
+  },
+  "git": {
+    "enabled": true,
+    "auto_branch": true,
+    "auto_commit": true,
+    "auto_push": false,
+    "branch_prefix": "agent/",
+    "remote": "origin"
   }
 }
 ```
@@ -200,15 +265,18 @@ This agent runs in **UNRESTRICTED MODE** for trusted local use:
 ```
 ai_agent/
   __init__.py
-  cli.py
-  compiler.py
-  config.py
-  db.py
-  notify.py
-  router.py
+  chaining.py       # Follow-up task parsing and enqueuing
+  cli.py            # CLI entry point
+  compiler.py       # Prompt compilation
+  config.py         # Configuration management
+  db.py             # SQLite database with task schema
+  git_ops.py        # Auto git branch/commit/push
+  notify.py         # Telegram notifications
+  router.py         # Claude-first provider routing with fallback
+  worker.py         # Parallel worker loop with repo locking
   providers/
-    claude_code.py
-    codex.py
+    claude_code.py   # Claude Code CLI runner
+    codex.py         # OpenAI Codex CLI runner
 README.md
 requirements.txt
 ```

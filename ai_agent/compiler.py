@@ -43,6 +43,12 @@ class PromptCompiler:
             Files changed:
             Commands run:
             Verification status:
+
+            If this task naturally leads to follow-up work, output a JSON block:
+            ```json
+            {{"followups":[{{"title":"...","request":"...","repo_path":"...","depends_on":"this"}}]}}
+            ```
+            Only include follow-ups when genuinely needed. Omit the block otherwise.
             """
         ).strip()
         return CompiledPrompt(text=prompt)
