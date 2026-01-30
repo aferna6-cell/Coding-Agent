@@ -14,7 +14,7 @@ from .db import Database, TaskRecord
 from .notify import TelegramNotifier
 from .providers.claude_code import ClaudeCodeRunner
 from .providers.codex import CodexRunner
-from .router import ProviderRouter
+from .router import ProviderRouter, extract_error_message
 
 STATUS_VALUES = ("queued", "running", "done", "failed", "canceled")
 
@@ -125,10 +125,40 @@ def handle_cancel(args: argparse.Namespace) -> None:
         print(f"Task {args.task_id} not canceled (not queued or missing)")
 
 
+def _smoke_test_codex_headless(codex_command: List[str]) -> tuple[bool, str]:
+    """Run a harmless Codex command in headless mode to verify no TTY crash.
+
+    Returns (ok, detail) where *ok* is True when the process launched
+    without a stdin/TTY error.  This does NOT require a valid API key —
+    it only checks that the subprocess can start in headless mode.
+    """
+    import subprocess as _sp
+    from .providers.codex import _headless_env, is_stdin_tty_error
+
+    cmd = list(codex_command) + ["--help"]
+    try:
+        proc = _sp.run(
+            cmd,
+            stdin=_sp.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env=_headless_env(),
+        )
+        logs = (proc.stdout or "") + (proc.stderr or "")
+        if is_stdin_tty_error(logs):
+            return False, "stdin/TTY error detected in headless mode"
+        return True, f"exit_code={proc.returncode}"
+    except FileNotFoundError:
+        return False, "codex binary not found"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def handle_doctor(args: argparse.Namespace) -> None:
     config_path = resolve_config_path(args.config)
     manager = load_config(config_path)
-    checks = []
+    checks: list[tuple[bool, str]] = []
     python_ok = sys.version_info >= (3, 11)
     checks.append((python_ok, f"Python {sys.version.split()[0]}"))
     if manager.exists():
@@ -139,6 +169,10 @@ def handle_doctor(args: argparse.Namespace) -> None:
         checks.append((telegram_ready, "Telegram configuration"))
         checks.append((shutil.which(config.provider.claude_command[0]) is not None, "Claude CLI"))
         checks.append((shutil.which(config.provider.codex_command[0]) is not None, "Codex CLI"))
+
+        # Smoke-test: run Codex in headless mode to catch stdin/TTY errors early.
+        codex_ok, codex_detail = _smoke_test_codex_headless(config.provider.codex_command)
+        checks.append((codex_ok, f"Codex headless smoke test ({codex_detail})"))
     else:
         checks.append((False, "Config missing: run agent init"))
 
@@ -172,11 +206,11 @@ def handle_run(args: argparse.Namespace) -> None:
             result, success = router.run(prompt.text)
 
             status = "done" if success else "failed"
-            last_error = None if success else "Provider failed"
+            last_error = None if success else extract_error_message(result)
             db.update_task(
                 task_id=task.id,
                 status=status,
-                provider_used=result.provider if success else result.provider,
+                provider_used=result.provider,
                 logs=result.logs,
                 last_error=last_error,
             )
